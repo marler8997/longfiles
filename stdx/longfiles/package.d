@@ -35,6 +35,7 @@ auto toLongPath(T)(T path)
 wchar[] toLongPathWindows(T)(T path)
 {
     import core.sys.windows.winbase : GetCurrentDirectoryW;
+    import std.array : appender;
     import std.string : startsWith;
     import std.path : isRooted, buildNormalizedPath;
     import stdx.longfiles.conv;
@@ -53,12 +54,30 @@ wchar[] toLongPathWindows(T)(T path)
             prefix = `\\?`w;
         return copyAndConvertStrings!wchar(prefix, path);
     }
-    const cwd = getCwdWindows();
-    if (cwd.length + path.length < 240)
-        return convertString!(wchar[])(path);
-    // TODO: there's definitely more use cases to handle
-    // TODO: there's probably a more efficient way to do this rather than using buildNormalizedPath
-    return copyAndConvertStrings!wchar(`\\?\`w, cwd, buildNormalizedPath(path));
+
+    version (InitialImplementation)
+    {
+        // Initial implementation
+        const cwd = getCwdWindows();
+        if (cwd.length + path.length < 240)
+            return convertString!(wchar[])(path);
+        // TODO: there's definitely more use cases to handle
+        // TODO: there's probably a more efficient way to do this rather than using buildNormalizedPath
+        return copyAndConvertStrings!wchar(`\\?\`w, cwd, buildNormalizedPath(path));
+    }
+    else
+    {
+        auto builder = appender!(wchar[])();
+        builder.put(`\\?\`w);
+        auto appended = tryAppendFullPathName(path, builder);
+        if (appended == 0)
+            throw new std.file.FileException("GetFullPathName failed");
+        // hack because you can't set the appender length if you populate
+        // the array without the 'put' functions
+        auto newPath = builder.data.ptr[0 .. builder.data.length + appended];
+        //import std.stdio; writefln("[DEBUG] '%s' > '%s'", path, newPath);
+        return newPath;
+    }
 }
 
 

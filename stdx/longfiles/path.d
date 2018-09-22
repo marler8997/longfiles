@@ -39,6 +39,77 @@ version (Windows)
             throw new FileException("GetCurrentDirectory failed");
         return result;
     }
+
+
+    bool isPartiallyQualified(T)(const(T)[] path)
+    in { assert(path.length > 0); } do
+    {
+        return path[0] != cast(T)'\\';
+    }
+
+    /**
+    \\?\, \\.\, \??\
+    */
+    enum DevicePrefixLength = 4;
+
+
+    /**
+    Get full path name of `path` and store in builder.
+    Returns: 0 on error, length of path on success
+    */
+    uint tryAppendFullPathName(T, U)(const(T)[] path, U builder)
+    {
+        import std.internal.cstring;
+        // create temporary string for path
+        auto pathTempCstr = tempCString!wchar(path);
+        return tryAppendFullPathNameImpl(pathTempCstr, builder);
+    }
+
+    /**
+    Assumption: `nullTerminatedPath` is nullTerminated.
+    */
+    uint tryAppendFullPathNameImpl(T)(const(wchar)* nullTerminatedPath, T builder)
+    /+
+    in {
+        // If the string starts with an extended prefix we would need to remove it from the path
+        // before we call GetFullPathName as it doesn't root extended paths correctly. We don't
+        // currently resolve extended paths, so we'll just assert here.
+        assert(isPartiallyQualified(nullTerminatedPath) || !isExtended(nullTerminatedPath)); } do
+    +/
+    {
+        import core.sys.windows.winbase : GetFullPathNameW;
+        auto prefixLength = builder.data.length;
+        for (;;)
+        {
+            const result = GetFullPathNameW(nullTerminatedPath, builder.capacity - prefixLength,
+                builder.data.ptr + prefixLength, null);
+            if (result <= (builder.capacity - prefixLength))
+            {
+                // note: cannot set Appender length
+                //       phobos needs to add a function for this
+                //builder.shrinkTo(result);
+                return result;
+            }
+            builder.reserve(prefixLength + result);
+        }
+    }
+
+    /**
+    Returns true if the path uses the canonical form of extended syntax ("\\?\" or "\??\"). If the
+    path matches exactly (cannot use alternate directory separators) Windows will skip normalization
+    and path length checks.
+    */
+    bool isExtended(T)(const(T)[] path)
+    {
+        // While paths like "//?/C:/" will work, they're treated the same as "\\.\" paths.
+        // Skipping of normalization will *only* occur if back slashes ('\') are used.
+        return path.length >= DevicePrefixLength
+            && path[0] == '\\'
+            && (path[1] == '\\' || path[1] == '?')
+            && path[2] == '?'
+            && path[3] == '\\';
+    }
+
     // TODO: THESE FUNCTIONS ARE ALREADY DEFINED IN std.path but are private
     private bool isDriveSeparator(dchar c) @safe pure nothrow @nogc
     {
